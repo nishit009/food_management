@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
-import kumbhakarna from "../assets/kumb.png";
+import kumbhakarna from "../assets/gat.gif";
 import feast from "../assets/backdrop.png";
 
 const floaters = [
@@ -50,16 +50,16 @@ export function Hero() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
         >
-          <span className="inline-block rounded-full border border-secondary bg-card/80 px-4 py-1 text-[11px] tracking-[0.3em] text-primary uppercase">
+          {/* <span className="inline-block rounded-full border border-secondary bg-card/80 px-4 py-1 text-[11px] tracking-[0.3em] text-primary uppercase">
             Chennai · Est. 1999
-          </span>
+          </span> */}
           <h1 className="mt-5 font-display text-4xl leading-tight text-primary sm:text-6xl">
-            Sree Ram Catering
+            Sree Pavan Caterers
           </h1>
-          <p className="mt-4 max-w-md text-base text-foreground/80 sm:text-lg">
+          {/* <p className="mt-4 max-w-md text-base text-foreground/80 sm:text-lg">
             Traditional Taste. Royal Experience. Feasts fit for a giant appetite — cooked on wood
             fire, served on banana leaf.
-          </p>
+          </p> */}
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               to="/menu"
@@ -91,10 +91,8 @@ export function Hero() {
             alt="Kumbhakarna, the mascot of Sree Ram Catering, holding a golden mace"
             className="animate-idle relative w-full drop-shadow-[0_20px_30px_rgba(58,36,20,0.35)]"
           />
-          <div
-            aria-hidden
-            className="mx-auto h-4 w-2/3 rounded-full bg-bark/25 blur-md"
-          />
+          {/* <video src={kumbhakarna}/> */}
+          <div aria-hidden className="mx-auto h-4 w-2/3 rounded-full bg-bark/25 blur-md" />
         </motion.div>
       </div>
     </section>

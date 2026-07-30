@@ -57,10 +57,10 @@ export const milestones: Milestone[] = [
 ];
 
 export const contact = {
-  phone: "+91 98404 12345",
-  whatsapp: "919840412345",
-  email: "hello@sreeramcatering.in",
-  address: "17, Mada Street, Mylapore, Chennai 600004",
-  instagram: "https://instagram.com",
-  facebook: "https://facebook.com",
+  phone: "+91 9849025535",
+  whatsapp: "+919849025535",
+  email: "pavan320@gmail.com",
+  address: "21,Pippala Annapurna Nilayam,500013",
+  instagram: "https://www.instagram.com/sreepavancaterers/",
+  facebook: "https://www.instagram.com/sreepavancaterers/",
 };

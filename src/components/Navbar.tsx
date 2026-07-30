@@ -20,11 +20,11 @@ export function Navbar() {
           </span>
           <span className="min-w-0">
             <span className="block truncate font-display text-lg leading-tight sm:text-xl">
-              Sree Ram Catering
+              Sree Pavan Caterers
             </span>
-            <span className="block truncate text-[11px] tracking-[0.25em] text-secondary uppercase">
+            {/* <span className="block truncate text-[11px] tracking-[0.25em] text-secondary uppercase">
               Since 1999
-            </span>
+            </span> */}
           </span>
         </Link>
 
