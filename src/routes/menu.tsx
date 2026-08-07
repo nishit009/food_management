@@ -37,7 +37,7 @@ function MenuPage() {
   );
 
   const entries = Object.entries(selected);
-  const totalItems = entries.reduce((sum, [, v]) => sum + v.qty, 0);
+  // const totalItems = entries.reduce((sum, [, v]) => sum + v.qty, 0);
 
   const toggleItem = (id: string, name: string, category: string) =>
     setSelected((prev) => {
@@ -47,20 +47,6 @@ function MenuPage() {
       return next;
     });
 
-  const setQty = (id: string, delta: number) =>
-    setSelected((prev) => {
-      const item = prev[id];
-      if (!item) return prev;
-      const qty = Math.max(1, item.qty + delta);
-      return { ...prev, [id]: { ...item, qty } };
-    });
-
-  const removeItem = (id: string) =>
-    setSelected((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
 
   const switchPackage = (id: string) => {
     setPackageId(id);
@@ -173,27 +159,6 @@ function MenuPage() {
                                   />
                                   <span className="truncate text-sm">{item.name}</span>
                                 </label>
-                                {sel && (
-                                  <div className="flex shrink-0 items-center gap-1 rounded-md border border-secondary/70 bg-card">
-                                    <button
-                                      type="button"
-                                      aria-label={`Decrease ${item.name}`}
-                                      onClick={() => setQty(item.id, -1)}
-                                      className="grid h-7 w-7 place-items-center text-primary"
-                                    >
-                                      <Minus className="h-3.5 w-3.5" />
-                                    </button>
-                                    <span className="w-6 text-center text-sm">{sel.qty}</span>
-                                    <button
-                                      type="button"
-                                      aria-label={`Increase ${item.name}`}
-                                      onClick={() => setQty(item.id, 1)}
-                                      className="grid h-7 w-7 place-items-center text-primary"
-                                    >
-                                      <Plus className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                )}
                               </li>
                             );
                           })}
@@ -227,33 +192,6 @@ function MenuPage() {
                           className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-3 py-2"
                         >
                           <span className="min-w-0 flex-1 truncate text-sm">{it.name}</span>
-                          <div className="flex shrink-0 items-center gap-1">
-                            <button
-                              type="button"
-                              aria-label={`Decrease ${it.name}`}
-                              onClick={() => setQty(it.id, -1)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-primary"
-                            >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="w-5 text-center text-sm">{it.qty}</span>
-                            <button
-                              type="button"
-                              aria-label={`Increase ${it.name}`}
-                              onClick={() => setQty(it.id, 1)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-primary"
-                            >
-                              <Plus className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Remove ${it.name}`}
-                              onClick={() => removeItem(it.id)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-destructive"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
                         </li>
                       ))}
                     </ul>
@@ -264,8 +202,6 @@ function MenuPage() {
 
             <div className="brass-rule my-5" />
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Total Selected Items</span>
-              <span className="font-display text-xl text-primary">{totalItems}</span>
             </div>
 
             {entries.length > 0 && (
