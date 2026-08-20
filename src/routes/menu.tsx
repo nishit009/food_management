@@ -1,8 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronDown, Minus, Plus, Trash2, X } from "lucide-react";
-import { menuPackages } from "@/data/menu";
+import {
+  Check,
+  X,
+  Utensils,
+  Crown,
+  Sparkles,
+  Settings2,
+  Pencil,
+  Plus,
+  Search,
+  Printer,
+  Copy,
+  Lock,
+  ChevronDown,
+} from "lucide-react";
+
+import {
+  ALL_DISHES,
+  CUISINE_POOL,
+  MAX_BOXES,
+  MAX_ITEMS_PER_BOX,
+  TIERS_META,
+  buildBoxesForTier,
+  makeId,
+  type MenuBox,
+  type TierId,
+} from "../datasets/menu-data.ts";
 
 export const Route = createFileRoute("/menu")({
   head: () => ({
@@ -10,300 +35,675 @@ export const Route = createFileRoute("/menu")({
       { title: "Build Your Menu — Sree Ram Catering" },
       {
         name: "description",
-        content:
-          "Choose Prasadam, Breakfast, Silver, Gold or a custom spread. Pick dishes, set quantities and request a price quote from Sree Ram Catering.",
+        content: "Build your own catering menu by selecting dishes from our collection.",
       },
-      { property: "og:title", content: "Build Your Feast — Sree Ram Catering" },
+      { property: "og:title", content: "Build Your Menu — Sree Ram Catering" },
       {
         property: "og:description",
-        content: "Interactive menu builder for weddings, temple events and festivals.",
+        content:
+          "Create your own catering menu and send your requirements directly to Sree Ram Catering.",
       },
     ],
   }),
   component: MenuPage,
 });
 
-type Selection = Record<string, { name: string; category: string; qty: number }>;
+/** Icon shown next to each package/tier — kept in the component since data files stay JSX-free. */
+const TIER_ICONS: Record<TierId, typeof Utensils> = {
+  traditional: Utensils,
+  gold: Sparkles,
+  platinum: Crown,
+  customize: Settings2,
+};
+
+/* ---------- Page ---------- */
 
 function MenuPage() {
-  const [packageId, setPackageId] = useState(menuPackages[2].id);
-  const [selected, setSelected] = useState<Selection>({});
-  const [openCats, setOpenCats] = useState<string[]>([]);
+  const [selectedTier, setSelectedTier] = useState<TierId | null>(null);
+  const [boxes, setBoxes] = useState<MenuBox[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [menuName, setMenuName] = useState("Your Menu");
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(menuName);
+  const [selectedQuery, setSelectedQuery] = useState("");
+  const [copied, setCopied] = useState(false);
 
-  const pack = useMemo(
-    () => menuPackages.find((p) => p.id === packageId)!,
-    [packageId],
-  );
-
-  const entries = Object.entries(selected);
-  const totalItems = entries.reduce((sum, [, v]) => sum + v.qty, 0);
-
-  const toggleItem = (id: string, name: string, category: string) =>
-    setSelected((prev) => {
-      const next = { ...prev };
-      if (next[id]) delete next[id];
-      else next[id] = { name, category, qty: 1 };
-      return next;
-    });
-
-  const setQty = (id: string, delta: number) =>
-    setSelected((prev) => {
-      const item = prev[id];
-      if (!item) return prev;
-      const qty = Math.max(1, item.qty + delta);
-      return { ...prev, [id]: { ...item, qty } };
-    });
-
-  const removeItem = (id: string) =>
-    setSelected((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-
-  const switchPackage = (id: string) => {
-    setPackageId(id);
-    setSelected({});
-    setOpenCats([]);
+  const startEditingName = () => {
+    setNameDraft(menuName);
+    setEditingName(true);
   };
 
-  const grouped = entries.reduce<Record<string, { id: string; name: string; qty: number }[]>>(
-    (acc, [id, v]) => {
-      (acc[v.category] ??= []).push({ id, name: v.name, qty: v.qty });
-      return acc;
-    },
-    {},
-  );
+  const commitName = () => {
+    const trimmed = nameDraft.trim();
+    setMenuName(trimmed || "Your Menu");
+    setEditingName(false);
+  };
+
+  const handleTierSelect = (tierId: TierId) => {
+    setSelectedTier(tierId);
+    setBoxes(buildBoxesForTier(tierId));
+    setSelectedQuery("");
+  };
+
+  const addBox = () => {
+    if (boxes.length >= MAX_BOXES) return;
+    setSelectedTier((t) => t ?? "customize");
+    setBoxes((prev) => [
+      ...prev,
+      { id: makeId(), name: "New Cuisine", items: [], maxItems: MAX_ITEMS_PER_BOX },
+    ]);
+  };
+
+  const removeBox = (id: string) => {
+    setBoxes((prev) => prev.filter((b) => b.id !== id));
+  };
+
+  const renameBox = (id: string, name: string) => {
+    setBoxes((prev) => prev.map((b) => (b.id === id ? { ...b, name: name || b.name } : b)));
+  };
+
+  /** Manual add via a specific box's own search (used for custom / renamed boxes). */
+  const addItemToBox = (id: string, item: string) => {
+    setBoxes((prev) =>
+      prev.map((b) => {
+        if (b.id !== id || b.locked) return b;
+        if (b.items.includes(item) || b.items.length >= b.maxItems) return b;
+        return { ...b, items: [...b.items, item] };
+      }),
+    );
+  };
+
+  /** Add via the catalog (Box A): finds the matching cuisine box in Box B, creating it if needed. */
+  const addItemToCuisine = (cuisine: string, dish: string) => {
+    setBoxes((prev) => {
+      const existing = prev.find((b) => b.name === cuisine);
+      if (existing) {
+        if (existing.locked) return prev;
+        if (existing.items.includes(dish) || existing.items.length >= existing.maxItems) {
+          return prev;
+        }
+        return prev.map((b) => (b.id === existing.id ? { ...b, items: [...b.items, dish] } : b));
+      }
+      if (prev.length >= MAX_BOXES) return prev;
+      return [...prev, { id: makeId(), name: cuisine, items: [dish], maxItems: MAX_ITEMS_PER_BOX }];
+    });
+    setSelectedTier((t) => t ?? "customize");
+  };
+
+  const removeItemFromBox = (id: string, item: string) => {
+    setBoxes((prev) =>
+      prev.map((b) =>
+        b.id === id && !b.locked ? { ...b, items: b.items.filter((i) => i !== item) } : b,
+      ),
+    );
+  };
+
+  const totalItems = useMemo(() => boxes.reduce((sum, b) => sum + b.items.length, 0), [boxes]);
+
+  const visibleBoxes = useMemo(() => {
+    const q = selectedQuery.trim().toLowerCase();
+    if (!q) return boxes.map((b) => ({ box: b, items: b.items }));
+    return boxes
+      .map((b) => ({ box: b, items: b.items.filter((i) => i.toLowerCase().includes(q)) }))
+      .filter((entry) => entry.items.length > 0);
+  }, [boxes, selectedQuery]);
+
+  const menuText = () =>
+    boxes
+      .filter((b) => b.items.length > 0)
+      .map((b) => `${b.name}:\n${b.items.map((item) => `  • ${item}`).join("\n")}`)
+      .join("\n\n");
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(`${menuName}\n\n${menuText()}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — silently ignore */
+    }
+  };
+
+  const handlePrint = () => window.print();
 
   return (
     <div className="stone-wash min-h-screen">
-      <div className="mx-auto max-w-6xl px-4 py-12">
-        <header className="text-center">
-          <h1 className="text-3xl text-primary sm:text-4xl">Build Your Feast</h1>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Pick a menu, choose your dishes, and we'll send the pricing your way.
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+        {/* Header */}
+        <header className="-mt-2 text-center">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            Sree Pavan Caterers
           </p>
-          <div className="brass-rule mx-auto mt-5 w-40" />
+          <h1 className="mt-1 text-2xl text-primary sm:text-3xl">Build Your Menu</h1>
+          <p className="mx-auto mt-1.5 max-w-xl text-xs leading-snug text-muted-foreground">
+            Pick a package, or add dishes from the catalog to build your own from scratch.
+          </p>
+          <div className="brass-rule mx-auto mt-3 w-28" />
         </header>
 
-        {/* Package cards */}
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {menuPackages.map((p) => {
-            const active = p.id === packageId;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => switchPackage(p.id)}
-                className={`rounded-lg border-2 p-5 text-left transition-all ${
-                  active
-                    ? "border-secondary bg-primary text-primary-foreground shadow-[var(--shadow-gold)]"
-                    : "panel-carved hover:-translate-y-1"
-                }`}
-              >
-                <span className="block font-display text-lg">{p.name}</span>
-                <span
-                  className={`mt-2 block text-xs leading-relaxed ${
-                    active ? "text-primary-foreground/80" : "text-muted-foreground"
-                  }`}
-                >
-                  {p.blurb}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Menu builder panel — packages + catalog (A) + your menu (B) */}
+        <div className="panel-carved mt-6 rounded-lg p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              {editingName ? (
+                <input
+                  autoFocus
+                  value={nameDraft}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && commitName()}
+                  onBlur={commitName}
+                  className="rounded-md border border-secondary bg-background px-2 py-1 text-xl text-primary outline-none"
+                />
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl text-primary">{menuName}</h2>
+                  <button
+                    type="button"
+                    onClick={startEditingName}
+                    aria-label="Edit menu name"
+                    className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+              <p className="mt-1 text-xs text-muted-foreground">
+                Add dishes from the catalog on the left, or pick a package on the right.
+              </p>
+            </div>
 
-        <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-          {/* Left: selection */}
-          <div className="panel-carved rounded-lg p-5">
-            <h2 className="text-xl text-primary">{pack.name}</h2>
-            <div className="mt-4 space-y-3">
-              {pack.categories.map((cat) => {
-                const open = openCats.includes(cat.id);
-                const count = cat.items.filter((i) => selected[i.id]).length;
-                return (
-                  <div key={cat.id} className="rounded-md border border-border bg-background/60">
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              {/* Package picker — small icons, replaces the old full-width tier row */}
+              <div className="flex items-center gap-1.5">
+                {TIERS_META.map((tier) => {
+                  const Icon = TIER_ICONS[tier.id];
+                  const active = selectedTier === tier.id;
+                  return (
                     <button
+                      key={tier.id}
                       type="button"
-                      onClick={() =>
-                        setOpenCats((prev) =>
-                          prev.includes(cat.id)
-                            ? prev.filter((c) => c !== cat.id)
-                            : [...prev, cat.id],
-                        )
-                      }
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                      title={`${tier.label} — ${tier.tagline}`}
+                      aria-label={tier.label}
+                      onClick={() => handleTierSelect(tier.id)}
+                      className={`grid h-8 w-8 place-items-center rounded-full border transition ${
+                        active
+                          ? "border-secondary bg-primary text-primary-foreground"
+                          : "border-secondary/40 text-primary hover:bg-primary/10"
+                      }`}
                     >
-                      <span className="min-w-0 truncate font-display text-base text-primary">
-                        {cat.name}
-                        {count > 0 && (
-                          <span className="ml-2 rounded-full bg-secondary px-2 py-0.5 text-[11px] text-secondary-foreground">
-                            {count}
-                          </span>
-                        )}
-                      </span>
-                      <ChevronDown
-                        className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-                      />
+                      <Icon className="h-3.5 w-3.5" />
                     </button>
-                    <AnimatePresence initial={false}>
-                      {open && (
-                        <motion.ul
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.22 }}
-                          className="overflow-hidden"
-                        >
-                          {cat.items.map((item) => {
-                            const sel = selected[item.id];
-                            return (
-                              <li
-                                key={item.id}
-                                className="flex items-center justify-between gap-3 border-t border-border/70 px-4 py-2.5"
-                              >
-                                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={Boolean(sel)}
-                                    onChange={() => toggleItem(item.id, item.name, cat.name)}
-                                    className="h-4 w-4 shrink-0 accent-[var(--crimson)]"
-                                  />
-                                  <span className="truncate text-sm">{item.name}</span>
-                                </label>
-                                {sel && (
-                                  <div className="flex shrink-0 items-center gap-1 rounded-md border border-secondary/70 bg-card">
-                                    <button
-                                      type="button"
-                                      aria-label={`Decrease ${item.name}`}
-                                      onClick={() => setQty(item.id, -1)}
-                                      className="grid h-7 w-7 place-items-center text-primary"
-                                    >
-                                      <Minus className="h-3.5 w-3.5" />
-                                    </button>
-                                    <span className="w-6 text-center text-sm">{sel.qty}</span>
-                                    <button
-                                      type="button"
-                                      aria-label={`Increase ${item.name}`}
-                                      onClick={() => setQty(item.id, 1)}
-                                      className="grid h-7 w-7 place-items-center text-primary"
-                                    >
-                                      <Plus className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </motion.ul>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={addBox}
+                  disabled={boxes.length >= MAX_BOXES}
+                  className="flex items-center gap-1 rounded-full border border-secondary/50 px-3 py-1.5 text-xs text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Cuisine
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  disabled={totalItems === 0}
+                  aria-label="Print menu"
+                  className="grid h-8 w-8 place-items-center rounded-full border border-secondary/50 text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  disabled={totalItems === 0}
+                  aria-label="Copy menu"
+                  className="grid h-8 w-8 place-items-center rounded-full border border-secondary/50 text-primary transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                </button>
+                <span className="rounded-full border border-secondary/50 px-3 py-1.5 text-xs">
+                  {totalItems}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Right: live panel */}
-          <aside className="panel-carved h-fit rounded-lg p-5 lg:sticky lg:top-24">
-            <h2 className="text-xl text-primary">Your Selected Menu</h2>
-            {entries.length === 0 ? (
-              <p className="mt-6 text-sm text-muted-foreground">
-                Nothing chosen yet. Open a category and tick the dishes you'd like served.
-              </p>
-            ) : (
-              <div className="mt-4 space-y-5">
-                {Object.entries(grouped).map(([category, items]) => (
-                  <div key={category}>
-                    <h3 className="text-xs tracking-[0.2em] text-muted-foreground uppercase">
-                      {category}
-                    </h3>
-                    <ul className="mt-2 space-y-2">
-                      {items.map((it) => (
-                        <li
-                          key={it.id}
-                          className="flex items-center justify-between gap-2 rounded-md bg-background/70 px-3 py-2"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-sm">{it.name}</span>
-                          <div className="flex shrink-0 items-center gap-1">
-                            <button
-                              type="button"
-                              aria-label={`Decrease ${it.name}`}
-                              onClick={() => setQty(it.id, -1)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-primary"
-                            >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="w-5 text-center text-sm">{it.qty}</span>
-                            <button
-                              type="button"
-                              aria-label={`Increase ${it.name}`}
-                              onClick={() => setQty(it.id, 1)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-primary"
-                            >
-                              <Plus className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Remove ${it.name}`}
-                              onClick={() => removeItem(it.id)}
-                              className="grid h-6 w-6 place-items-center rounded border border-border text-destructive"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* A / B layout: catalog on the left, selected menu on the right */}
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            {/* Box A — catalog */}
+            <CuisineCatalogPanel boxes={boxes} onAddItem={addItemToCuisine} />
 
-            <div className="brass-rule my-5" />
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Total Selected Items</span>
-              <span className="font-display text-xl text-primary">{totalItems}</span>
+            {/* Box B — your menu, stacked vertically */}
+            <div>
+              {boxes.length > 0 && (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={selectedQuery}
+                    onChange={(e) => setSelectedQuery(e.target.value)}
+                    placeholder="Search your menu..."
+                    className="w-full rounded-full border border-border bg-background/80 py-2.5 pl-10 pr-9 text-sm outline-none transition focus:border-secondary"
+                  />
+                  {selectedQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQuery("")}
+                      aria-label="Clear search"
+                      className="absolute right-2.5 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-muted"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {boxes.length === 0 ? (
+                <div className="mt-3 rounded-md border border-dashed border-border p-6 text-center lg:mt-0">
+                  <Utensils className="mx-auto h-7 w-7 text-muted-foreground" />
+                  <p className="mt-3 text-sm text-muted-foreground">Your menu is empty.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Add dishes from the catalog, or pick a package above.
+                  </p>
+                </div>
+              ) : visibleBoxes.length === 0 ? (
+                <div className="mt-3 rounded-md border border-dashed border-border p-6 text-center">
+                  <p className="text-sm text-muted-foreground">
+                    No dishes match "{selectedQuery}".
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {visibleBoxes.map(({ box, items }) => (
+                    <SelectedCuisineCard
+                      key={box.id}
+                      box={box}
+                      displayItems={items}
+                      onRename={(name) => renameBox(box.id, name)}
+                      onRemoveBox={() => removeBox(box.id)}
+                      onAddItem={(item) => addItemToBox(box.id, item)}
+                      onRemoveItem={(item) => removeItemFromBox(box.id, item)}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
+          </div>
 
-            {entries.length > 0 && (
+          {totalItems > 0 && (
+            <>
+              <div className="brass-rule my-5" />
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Total dishes</span>
+                <span className="font-medium text-primary">{totalItems}</span>
+              </div>
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                className="mt-5 w-full rounded-md border-2 border-secondary bg-primary px-5 py-3 font-display text-base text-primary-foreground transition-transform hover:scale-[1.02]"
+                className="mt-5 w-full rounded-md border-2 border-secondary bg-primary px-5 py-3 font-display text-base text-primary-foreground transition-transform hover:scale-[1.01]"
               >
-                Request Price Quote
+                Send Catering Request
               </button>
-            )}
-          </aside>
+            </>
+          )}
         </div>
       </div>
 
       <AnimatePresence>
-        {modalOpen && (
-          <QuoteModal
-            menuName={pack.name}
-            onClose={() => setModalOpen(false)}
-          />
-        )}
+        {modalOpen && <QuoteModal boxes={boxes} onClose={() => setModalOpen(false)} />}
       </AnimatePresence>
     </div>
   );
 }
 
-function QuoteModal({ menuName, onClose }: { menuName: string; onClose: () => void }) {
+/* ---------- Box A: catalog / browse panel ---------- */
+
+function CuisineCatalogPanel({
+  boxes,
+  onAddItem,
+}: {
+  boxes: MenuBox[];
+  onAddItem: (cuisine: string, dish: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [openCuisines, setOpenCuisines] = useState<Record<string, boolean>>({});
+
+  const toggleCuisine = (name: string) => {
+    setOpenCuisines((prev) => ({ ...prev, [name]: !prev[name] }));
+  };
+
+  const cuisineNames = useMemo(() => Object.keys(CUISINE_POOL), []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return cuisineNames
+      .map((name) => ({
+        name,
+        items: q
+          ? CUISINE_POOL[name].filter((d) => d.toLowerCase().includes(q))
+          : CUISINE_POOL[name],
+      }))
+      .filter((c) => c.items.length > 0);
+  }, [query, cuisineNames]);
+
+  const boxFor = (cuisine: string) => boxes.find((b) => b.name === cuisine);
+
+  return (
+    <div className="rounded-md border border-border bg-background/60 p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-display text-base text-primary">Browse Dishes</h3>
+        <span className="text-[10px] text-muted-foreground">{ALL_DISHES.length} dishes</span>
+      </div>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Pick a cuisine, then add dishes to your menu.
+      </p>
+
+      <div className="relative mt-3">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search all dishes..."
+          className="w-full rounded-full border border-border bg-background/80 py-2 pl-9 pr-8 text-xs outline-none transition focus:border-secondary"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Clear search"
+            className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-full text-muted-foreground hover:bg-muted"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
+      <div className="mt-3 max-h-[560px] space-y-2 overflow-y-auto pr-1">
+        {filtered.length === 0 && (
+          <p className="px-1 py-4 text-center text-xs text-muted-foreground">
+            No dishes match "{query}".
+          </p>
+        )}
+
+        {filtered.map(({ name, items }) => {
+          const isOpen = Boolean(openCuisines[name]) || query.trim().length > 0;
+          const box = boxFor(name);
+          const addedCount = box ? box.items.length : 0;
+
+          return (
+            <div key={name} className="overflow-hidden rounded-md border border-border/70">
+              <button
+                type="button"
+                onClick={() => toggleCuisine(name)}
+                className="flex w-full items-center justify-between gap-2 bg-background/80 px-3 py-2 text-left"
+              >
+                <span className="truncate font-display text-sm text-primary">{name}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {addedCount > 0 && (
+                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">
+                      {addedCount} added
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                      isOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </span>
+              </button>
+
+              {isOpen && (
+                <div className="space-y-1 bg-background/40 p-2">
+                  {items.map((dish) => {
+                    const already = box?.items.includes(dish) ?? false;
+                    const full = box ? box.items.length >= box.maxItems : false;
+                    return (
+                      <div
+                        key={dish}
+                        className="flex items-center justify-between gap-2 rounded-md bg-background px-2.5 py-1.5"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-xs">{dish}</span>
+                        <button
+                          type="button"
+                          onClick={() => onAddItem(name, dish)}
+                          disabled={already || full}
+                          aria-label={already ? `${dish} already added` : `Add ${dish}`}
+                          className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-primary/10 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {already ? <Check className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Box B: selected cuisine card ---------- */
+
+function SelectedCuisineCard({
+  box,
+  displayItems,
+  onRename,
+  onRemoveBox,
+  onAddItem,
+  onRemoveItem,
+}: {
+  box: MenuBox;
+  displayItems: string[];
+  onRename: (name: string) => void;
+  onRemoveBox: () => void;
+  onAddItem: (item: string) => void;
+  onRemoveItem: (item: string) => void;
+}) {
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(box.name);
+  const [query, setQuery] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  const commitName = () => {
+    onRename(nameDraft.trim());
+    setEditingName(false);
+  };
+
+  // Fallback manual add — mainly useful for custom / renamed boxes that
+  // don't exactly match a catalog cuisine name in Box A.
+  const suggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const pool = ALL_DISHES.filter((dish) => !box.items.includes(dish));
+    if (!q) return pool.slice(0, 5);
+    return pool.filter((dish) => dish.toLowerCase().includes(q)).slice(0, 5);
+  }, [query, box.items]);
+
+  const full = box.items.length >= box.maxItems;
+
+  const addAndClear = (dish: string) => {
+    onAddItem(dish);
+    setQuery("");
+  };
+
+  return (
+    <div className="rounded-md border border-border bg-background/60 p-3">
+      <div className="flex items-center justify-between gap-2">
+        {editingName ? (
+          <input
+            autoFocus
+            value={nameDraft}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && commitName()}
+            onBlur={commitName}
+            className="min-w-0 flex-1 rounded-md border border-secondary bg-background px-2 py-1 text-sm text-primary outline-none"
+          />
+        ) : (
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-display text-sm text-primary">{box.name}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setNameDraft(box.name);
+                setEditingName(true);
+              }}
+              aria-label="Rename cuisine"
+              className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {box.locked ? (
+            <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <span className="text-[10px] text-muted-foreground">
+              {box.items.length}/{box.maxItems}
+            </span>
+          )}
+          {!box.locked && (
+            <button
+              type="button"
+              onClick={onRemoveBox}
+              aria-label="Remove cuisine box"
+              className="grid h-5 w-5 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setCollapsed((c) => !c)}
+            aria-label={collapsed ? `Expand ${box.name}` : `Collapse ${box.name}`}
+            aria-expanded={!collapsed}
+            className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${collapsed ? "-rotate-90" : ""}`}
+            />
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <div className="mt-2 space-y-1.5">
+          {displayItems.map((item) => (
+            <div
+              key={item}
+              className="flex items-center justify-between gap-2 rounded-md bg-background/80 px-2.5 py-1.5"
+            >
+              <span className="min-w-0 flex-1 truncate text-xs">{item}</span>
+              {!box.locked && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveItem(item)}
+                  aria-label={`Remove ${item}`}
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          ))}
+          {displayItems.length === 0 && (
+            <p className="px-1 py-1 text-xs text-muted-foreground">No items yet.</p>
+          )}
+        </div>
+      )}
+
+      {/* Manual search + add — hidden for the locked Default box, and while collapsed */}
+      {!box.locked && !collapsed && (
+        <div className="relative mt-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 120)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && suggestions[0]) addAndClear(suggestions[0]);
+            }}
+            placeholder={full ? "Box full" : "Search dish to add..."}
+            disabled={full}
+            className="w-full rounded-md border border-input bg-background py-1.5 pl-8 pr-2 text-xs outline-none focus:border-secondary disabled:opacity-50"
+          />
+
+          {focused && !full && suggestions.length > 0 && (
+            <div className="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-md border border-border bg-background shadow-md">
+              {suggestions.map((dish) => (
+                <button
+                  key={dish}
+                  type="button"
+                  onClick={() => addAndClear(dish)}
+                  className="flex w-full items-center gap-1.5 truncate px-2.5 py-1.5 text-left text-xs hover:bg-muted"
+                >
+                  <Plus className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  {dish}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Quote modal ---------- */
+
+function QuoteModal({ boxes, onClose }: { boxes: MenuBox[]; onClose: () => void }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [eventDate, setEventDate] = useState("");
+  const [guests, setGuests] = useState("");
+  const [location, setLocation] = useState("");
+  const [notes, setNotes] = useState("");
   const [sent, setSent] = useState(false);
+
+  const totalItems = boxes.reduce((sum, b) => sum + b.items.length, 0);
+
+  const createMessage = () => {
+    const menu = boxes
+      .filter((b) => b.items.length > 0)
+      .map((b) => `${b.name}:\n${b.items.map((item) => `  • ${item}`).join("\n")}`)
+      .join("\n\n");
+
+    return [
+      "CATERING MENU REQUEST",
+      "",
+      `Name: ${name}`,
+      `Phone: ${phone}`,
+      `Event Date: ${eventDate}`,
+      `Guests: ${guests}`,
+      `Location: ${location}`,
+      "",
+      "SELECTED MENU:",
+      menu,
+      "",
+      `Additional Requirements: ${notes || "None"}`,
+    ].join("\n");
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    console.log(createMessage());
+    setSent(true);
+  };
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 grid place-items-center bg-bark/60 px-4"
+      className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-bark/60 px-4 py-8"
       onClick={onClose}
     >
       <motion.div
@@ -311,12 +711,17 @@ function QuoteModal({ menuName, onClose }: { menuName: string; onClose: () => vo
         animate={{ scale: 1, y: 0 }}
         exit={{ scale: 0.94, opacity: 0 }}
         onClick={(e) => e.stopPropagation()}
-        className="panel-carved w-full max-w-md rounded-lg p-7"
+        className="panel-carved w-full max-w-lg rounded-lg p-6 sm:p-7"
       >
         <div className="flex items-start justify-between gap-4">
-          <h2 className="text-2xl text-primary">
-            {sent ? "Order Noted" : "Request Price Quote"}
-          </h2>
+          <div>
+            <h2 className="text-2xl text-primary">{sent ? "Request Ready" : "Catering Request"}</h2>
+            {!sent && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Tell us about your event and we'll get back to you.
+              </p>
+            )}
+          </div>
           <button
             type="button"
             aria-label="Close"
@@ -328,48 +733,138 @@ function QuoteModal({ menuName, onClose }: { menuName: string; onClose: () => vo
         </div>
 
         {sent ? (
-          <p className="mt-4 text-sm text-foreground/80">
-            Thank you! We'll contact you soon with pricing details.
-          </p>
+          <div className="mt-6">
+            <p className="text-sm leading-relaxed text-foreground/80">
+              Your menu has been recorded. The next step is to connect this form to your preferred
+              contact method so the complete catering request reaches you.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-5 w-full rounded-md border-2 border-secondary bg-primary px-5 py-3 font-display text-base text-primary-foreground"
+            >
+              Close
+            </button>
+          </div>
         ) : (
-          <form
-            className="mt-5 space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setSent(true);
-            }}
-          >
-            <p className="text-xs text-muted-foreground">Menu: {menuName}</p>
+          <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="q-name"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Name
+                </label>
+                <input
+                  id="q-name"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="q-phone"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Phone
+                </label>
+                <input
+                  id="q-phone"
+                  required
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="q-date"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Event Date
+                </label>
+                <input
+                  id="q-date"
+                  required
+                  type="date"
+                  value={eventDate}
+                  onChange={(e) => setEventDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="q-guests"
+                  className="text-xs uppercase tracking-wide text-muted-foreground"
+                >
+                  Guests
+                </label>
+                <input
+                  id="q-guests"
+                  required
+                  min="1"
+                  type="number"
+                  value={guests}
+                  onChange={(e) => setGuests(e.target.value)}
+                  placeholder="e.g. 250"
+                  className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
+                />
+              </div>
+            </div>
+
             <div>
-              <label htmlFor="q-name" className="text-xs tracking-wide text-muted-foreground uppercase">
-                Name
+              <label
+                htmlFor="q-location"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                Event Location
               </label>
               <input
-                id="q-name"
+                id="q-location"
                 required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-secondary"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Venue / area"
+                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
               />
             </div>
+
             <div>
-              <label htmlFor="q-phone" className="text-xs tracking-wide text-muted-foreground uppercase">
-                Phone Number
+              <label
+                htmlFor="q-notes"
+                className="text-xs uppercase tracking-wide text-muted-foreground"
+              >
+                Additional Requirements
               </label>
-              <input
-                id="q-phone"
-                required
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:border-secondary"
+              <textarea
+                id="q-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={3}
+                placeholder="Special dishes, dietary requirements, serving preferences..."
+                className="mt-1 w-full resize-none rounded-md border border-input bg-background px-3 py-2.5 text-sm outline-none focus:border-secondary"
               />
             </div>
+
+            <div className="rounded-md bg-background/70 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Dishes selected</span>
+                <span className="font-medium text-primary">{totalItems}</span>
+              </div>
+            </div>
+
             <button
               type="submit"
-              className="w-full rounded-md border-2 border-secondary bg-primary px-5 py-3 font-display text-base text-primary-foreground"
+              className="w-full rounded-md border-2 border-secondary bg-primary px-5 py-3 font-display text-base text-primary-foreground transition-transform hover:scale-[1.01]"
             >
-              Send Request
+              Prepare Catering Request
             </button>
           </form>
         )}
